@@ -41,6 +41,13 @@ def init_db():
             observacion TEXT
         )
     ''')
+    
+    # Migración automática: asegurar que la columna 'observacion' exista si la tabla se creó antes
+    c.execute("PRAGMA table_info(pagos)")
+    columnas = [col[1] for col in c.fetchall()]
+    if 'observacion' not in columnas:
+        c.execute("ALTER TABLE pagos ADD COLUMN observacion TEXT")
+
     conn.commit()
     conn.close()
 
@@ -322,7 +329,6 @@ if menu == "📊 Reporte de Deudas (Para el Jefe)":
 elif menu == "📦 Registrar Compra / Factura":
     st.title("📦 Registrar Compra o Insumo A Crédito")
 
-    # Obtener proveedores existentes para facilitar autocompletado
     provs_compras = df_compras['proveedor'].dropna().unique().tolist() if not df_compras.empty else []
     provs_pagos = df_pagos['proveedor'].dropna().unique().tolist() if not df_pagos.empty else []
     todos_proveedores = sorted(list(set(provs_compras + provs_pagos)))
@@ -445,7 +451,6 @@ elif menu == "📜 Historial Detallado":
         df_c_disp = df_c.copy()
         df_c_disp['precio_kg'] = df_c_disp['precio_kg'].apply(lambda x: f"${x:,.2f}")
         df_c_disp['total'] = df_c_disp['total'].apply(lambda x: f"${x:,.2f}")
-        # Renombrar columnas para la vista del usuario
         df_c_disp = df_c_disp.rename(columns={
             'fruta': 'item_concepto',
             'kilos': 'cantidad_kilos',
