@@ -716,79 +716,78 @@ elif menu == "📜 Historial Detallado":
         for _, row in df_c_disp.iterrows():
             rem = str(row['remision'])
             prov = str(row['proveedor']).strip().upper()
+            
+            # Sumar abonos aplicados específicamente a esta factura
             if not df_p.empty and 'remision_asociada' in df_p.columns:
-                df_p_prov = df_p[df_p['proveedor'].astype(str).str.strip().str.upper() == prov]
-                abono_f = df_p_prov[df_p_prov['remision_asociada'].astype(str) == rem]['monto'].sum()
+                abono_fac = df_p[(df_p['proveedor'].astype(str).str.strip().str.upper() == prov) & (df_p['remision_asociada'].astype(str) == rem)]['monto'].sum()
             else:
-                abono_f = 0
-            saldo_f = row['total'] - abono_f
-            abonos_por_factura.append(abono_f)
-            saldos_por_factura.append(saldo_f)
-
+                abono_fac = 0.0
+                
+            saldo_fac = row['total'] - abono_fac
+            abonos_por_factura.append(abono_fac)
+            saldos_por_factura.append(saldo_fac)
+            
         df_c_disp['Total Abonado'] = abonos_por_factura
-        df_c_disp['Saldo Factura'] = saldos_por_factura
+        df_c_disp['Saldo Pendiente'] = saldos_por_factura
 
-        df_c_disp['precio_kg'] = df_c_disp['precio_kg'].apply(lambda x: f"${x:,.2f}")
-        df_c_disp['total'] = df_c_disp['total'].apply(lambda x: f"${x:,.2f}")
-        df_c_disp['Total Abonado'] = df_c_disp['Total Abonado'].apply(lambda x: f"${x:,.2f}")
-        df_c_disp['Saldo Factura'] = df_c_disp['Saldo Factura'].apply(lambda x: f"${x:,.2f}")
-        
-        df_c_disp = df_c_disp.rename(columns={
-            'fruta': 'item_concepto',
-            'kilos': 'cantidad_kilos',
-            'precio_kg': 'precio_unitario',
-            'remision': 'factura_remision',
-            'total': 'valor_factura'
-        })
-        cols_c = [c for c in ['fecha', 'factura_remision', 'proveedor', 'item_concepto', 'cantidad_kilos', 'precio_unitario', 'valor_factura', 'Total Abonado', 'Saldo Factura'] if c in df_c_disp.columns]
-        st.dataframe(df_c_disp[cols_c], use_container_width=True)
+        # Formatear montos
+        df_c_show = df_c_disp[['fecha', 'remision', 'proveedor', 'fruta', 'kilos', 'precio_kg', 'total', 'Total Abonado', 'Saldo Pendiente']].copy()
+        df_c_show['precio_kg'] = df_c_show['precio_kg'].apply(lambda x: f"${x:,.2f}")
+        df_c_show['total'] = df_c_show['total'].apply(lambda x: f"${x:,.2f}")
+        df_c_show['Total Abonado'] = df_c_show['Total Abonado'].apply(lambda x: f"${x:,.2f}")
+        df_c_show['Saldo Pendiente'] = df_c_show['Saldo Pendiente'].apply(lambda x: f"${x:,.2f}")
+
+        st.dataframe(df_c_show, use_container_width=True)
     else:
-        st.info("No hay compras ni facturas a crédito registradas.")
+        st.info("No hay facturas a crédito registradas.")
+
+    st.markdown("---")
 
     st.subheader(f"💵 Historial de Abonos y Pagos ({prov_seleccionado})")
     if not df_p.empty:
-        df_p_disp = df_p.copy()
-        df_p_disp['monto'] = df_p_disp['monto'].apply(lambda x: f"${x:,.2f}")
-        if 'remision_asociada' not in df_p_disp.columns:
-            df_p_disp['remision_asociada'] = 'General'
-        df_p_disp['remision_asociada'] = df_p_disp['remision_asociada'].fillna('General')
-        df_p_disp = df_p_disp.rename(columns={'remision_asociada': 'factura_asociada'})
-        cols_p = [c for c in ['fecha', 'comprobante', 'proveedor', 'factura_asociada', 'monto', 'observacion'] if c in df_p_disp.columns]
-        st.dataframe(df_p_disp[cols_p], use_container_width=True)
+        df_p_show = df_p[['fecha', 'comprobante', 'proveedor', 'remision_asociada', 'monto', 'observacion']].copy()
+        df_p_show['monto'] = df_p_show['monto'].apply(lambda x: f"${x:,.2f}")
+        st.dataframe(df_p_show, use_container_width=True)
     else:
-        st.info("No hay pagos registrados.")
+        st.info("No hay pagos o abonos registrados.")
 
 # ----------------------------------------------------
 # OPCIÓN 6: ELIMINAR REGISTROS
 # ----------------------------------------------------
 elif menu == "🗑️ Eliminar Registros":
-    st.title("🗑️ Eliminar Registros Incorrectos")
-    st.warning("Cuidado: Al borrar un registro se actualizarán automáticamente las cuentas y deudas.")
+    st.title("🗑️ Control y Eliminación de Registros")
+    st.warning("⚠️ Ten precaución: las acciones de eliminación son irreversibles.")
 
-    tipo_eliminar = st.radio("¿Qué deseas eliminar?", ["Compra / Factura", "Pago / Abono"])
+    tab1, tab2 = st.tabs(["🛒 Eliminar Compras", "💵 Eliminar Pagos"])
 
-    if tipo_eliminar == "Compra / Factura":
+    with tab1:
         if not df_compras.empty:
-            df_compras['etiqueta'] = df_compras.apply(lambda r: f"ID: {r['id']} | Fecha: {r['fecha']} | Prov: {r['proveedor']} | Tipo: {r.get('tipo_pago', 'A CRÉDITO')} | Total: ${r['total']:,.2f} | Remisión: {r['remision']}", axis=1)
-            opcion = st.selectbox("Selecciona la compra a eliminar:", df_compras['etiqueta'].tolist())
-            id_eliminar = int(opcion.split("|")[0].replace("ID:", "").strip())
-
-            if st.button("Confirmar y Eliminar Compra", type="primary"):
-                eliminar_registro("compras", id_eliminar)
-                st.success("Compra eliminada correctamente.")
+            df_compras_del = df_compras.copy()
+            df_compras_del['selector'] = df_compras_del.apply(
+                lambda r: f"ID: {r['id']} | Fecha: {r['fecha']} | Ref: {r['remision']} | Prov: {r['proveedor']} | Total: ${r['total']:,.2f} ({r['tipo_pago']})", axis=1
+            )
+            compra_a_eliminar = st.selectbox("Selecciona la compra a eliminar:", df_compras_del['selector'].tolist())
+            
+            if st.button("❌ Eliminar Compra Seleccionada", type="primary"):
+                id_elim = int(compra_a_eliminar.split("|")[0].replace("ID:", "").strip())
+                eliminar_registro("compras", id_elim)
+                st.success(f"Compra ID {id_elim} eliminada correctamente.")
                 st.rerun()
         else:
-            st.info("No hay compras para eliminar.")
+            st.info("No hay compras registradas.")
 
-    else:
+    with tab2:
         if not df_pagos.empty:
-            df_pagos['etiqueta'] = df_pagos.apply(lambda r: f"ID: {r['id']} | Fecha: {r['fecha']} | Prov: {r['proveedor']} | Monto: ${r['monto']:,.2f} | Comp: {r['comprobante']}", axis=1)
-            opcion = st.selectbox("Selecciona el pago a eliminar:", df_pagos['etiqueta'].tolist())
-            id_eliminar = int(opcion.split("|")[0].replace("ID:", "").strip())
-
-            if st.button("Confirmar y Eliminar Pago", type="primary"):
-                eliminar_registro("pagos", id_eliminar)
-                st.success("Pago/Abono eliminado correctamente.")
+            df_pagos_del = df_pagos.copy()
+            df_pagos_del['selector'] = df_pagos_del.apply(
+                lambda r: f"ID: {r['id']} | Fecha: {r['fecha']} | Comp: {r['comprobante']} | Prov: {r['proveedor']} | Monto: ${r['monto']:,.2f} | Ref: {r.get('remision_asociada', 'General')}", axis=1
+            )
+            pago_a_eliminar = st.selectbox("Selecciona el pago a eliminar:", df_pagos_del['selector'].tolist())
+            
+            if st.button("❌ Eliminar Pago Seleccionado", type="primary"):
+                id_elim = int(pago_a_eliminar.split("|")[0].replace("ID:", "").strip())
+                eliminar_registro("pagos", id_elim)
+                st.success(f"Pago ID {id_elim} eliminado correctamente.")
                 st.rerun()
         else:
-            st.info("No hay pagos para eliminar.")
+            st.info("No hay pagos registrados.")
