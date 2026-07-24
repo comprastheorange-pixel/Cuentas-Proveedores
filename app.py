@@ -38,15 +38,18 @@ def init_db():
             comprobante TEXT,
             proveedor TEXT,
             monto REAL,
-            observacion TEXT
+            observacion TEXT,
+            remision_asociada TEXT
         )
     ''')
     
-    # Migración automática: asegurar que la columna 'observacion' exista
+    # Migraciones automáticas para bases de datos existentes
     c.execute("PRAGMA table_info(pagos)")
-    columnas = [col[1] for col in c.fetchall()]
-    if 'observacion' not in columnas:
+    columnas_pagos = [col[1] for col in c.fetchall()]
+    if 'observacion' not in columnas_pagos:
         c.execute("ALTER TABLE pagos ADD COLUMN observacion TEXT")
+    if 'remision_asociada' not in columnas_pagos:
+        c.execute("ALTER TABLE pagos ADD COLUMN remision_asociada TEXT")
 
     conn.commit()
     conn.close()
@@ -76,13 +79,13 @@ def insertar_compra(fecha, remision, proveedor, fruta, kilos, precio_kg, total):
     conn.commit()
     conn.close()
 
-def insertar_pago(fecha, comprobante, proveedor, monto, observacion):
+def insertar_pago(fecha, comprobante, proveedor, monto, observacion, remision_asociada):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''
-        INSERT INTO pagos (fecha, comprobante, proveedor, monto, observacion)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (fecha, comprobante, proveedor, monto, observacion))
+        INSERT INTO pagos (fecha, comprobante, proveedor, monto, observacion, remision_asociada)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (fecha, comprobante, proveedor, monto, observacion, remision_asociada))
     conn.commit()
     conn.close()
 
@@ -190,7 +193,7 @@ def generar_pdf_historial(df_compras, df_pagos, proveedor_nombre, total_c, total
     story.append(Spacer(1, 5))
 
     if not df_compras.empty:
-        t_compras_data = [["Fecha", "Remisión/Factura", "Ítem/Concepto", "Cantidad/Kilos", "Precio Unit.", "Total"]]
+        t_compras_data = [["Fecha", "Remisión/Factura", "Ítem/Concepto", "Cantidad", "Precio Unit.", "Total"]]
         for _, r in df_compras.iterrows():
             t_compras_data.append([
                 str(r.get('fecha', '-')),
@@ -221,24 +224,28 @@ def generar_pdf_historial(df_compras, df_pagos, proveedor_nombre, total_c, total
     story.append(Spacer(1, 5))
 
     if not df_pagos.empty:
-        t_pagos_data = [["Fecha", "Comprobante", "Monto", "Observación"]]
+        t_pagos_data = [["Fecha", "Comprobante", "Factura Aplicada", "Monto", "Observación"]]
         for _, r in df_pagos.iterrows():
             obs = r.get('observacion', '-')
             if pd.isna(obs) or str(obs).strip() == '':
                 obs = '-'
+            rem = r.get('remision_asociada', 'General')
+            if pd.isna(rem) or str(rem).strip() == '':
+                rem = 'General'
             t_pagos_data.append([
                 str(r.get('fecha', '-')),
                 str(r.get('comprobante', '-')),
+                str(rem),
                 f"${r.get('monto', 0):,.2f}",
                 str(obs)
             ])
-        t_p = Table(t_pagos_data, colWidths=[80, 100, 120, 240])
+        t_p = Table(t_pagos_data, colWidths=[70, 90, 110, 100, 170])
         t_p.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#10B981')),
             ('TEXTCOLOR', (0,0), (-1,0), colors.white),
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('FONTSIZE', (0,0), (-1,-1), 8),
-            ('ALIGN', (2,0), (2,-1), 'RIGHT'),
+            ('ALIGN', (3,0), (3,-1), 'RIGHT'),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E5E7EB')),
             ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#F9FAFB')]),
         ]))
@@ -333,7 +340,6 @@ elif menu == "📦 Registrar Compra / Factura":
     provs_pagos = df_pagos['proveedor'].dropna().unique().tolist() if not df_pagos.empty else []
     todos_proveedores = sorted(list(set(provs_compras + provs_pagos)))
 
-    # Selección de proveedor fuera del form para refresco inmediato
     opcion_prov = st.radio("¿Cómo deseas ingresar el proveedor?", ["Escribir nombre (Nuevo o Existente)", "Seleccionar de la lista de existentes"], horizontal=True)
 
     if opcion_prov == "Seleccionar de la lista de existentes" and todos_proveedores:
@@ -366,7 +372,7 @@ elif menu == "📦 Registrar Compra / Factura":
                 st.rerun()
 
 # ----------------------------------------------------
-# OPCIÓN 3: REGISTRAR PAGO / ABONO
+# OPCIÓN 3: REGISTRAR PAGO / ABONO (CON ASOCIACIÓN A FACTURA)
 # ----------------------------------------------------
 elif menu == "💵 Registrar Pago / Abono":
     st.title("💵 Registrar Pago o Abono a Proveedor")
@@ -382,6 +388,25 @@ elif menu == "💵 Registrar Pago / Abono":
     else:
         proveedor_pago_sel = st.text_input("Nombre del Proveedor (Escribe libremente):", key="pago_text")
 
+    prov_pago_limpio = proveedor_pago_sel.strip().upper() if proveedor_pago_sel else ""
+
+    # Obtener facturas/remisiones pendientes de este proveedor
+    opciones_facturas = ["General / Sin Factura Especifica"]
+    if prov_pago_limpio and not df_compras.empty:
+        df_c_prov = df_compras[df_compras['proveedor'] == prov_pago_limpio]
+        for _, row in df_c_prov.iterrows():
+            rem = str(row['remision'])
+            tot = row['total']
+            # Calcular abonos previos a esta remisión
+            if not df_pagos.empty and 'remision_asociada' in df_pagos.columns:
+                abono_previo = df_pagos[(df_pagos['proveedor'] == prov_pago_limpio) & (df_pagos['remision_asociada'] == rem)]['monto'].sum()
+            else:
+                abono_previo = 0
+            saldo_rem = tot - abono_previo
+            opciones_facturas.append(f"Factura: {rem} | Total: ${tot:,.2f} | Saldo Pendiente: ${saldo_rem:,.2f}")
+
+    factura_seleccionada = st.selectbox("Aplicar abono a Factura/Remisión específica:", opciones_facturas)
+
     with st.form("form_pago", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
@@ -394,16 +419,19 @@ elif menu == "💵 Registrar Pago / Abono":
 
         submitted = st.form_submit_button("Guardar Pago / Abono")
         if submitted:
-            prov_pago_final = proveedor_pago_sel.strip().upper() if proveedor_pago_sel else ""
-            if not prov_pago_final or monto <= 0:
+            if not prov_pago_limpio or monto <= 0:
                 st.error("Por favor ingresa un proveedor válido y un monto mayor a cero.")
             else:
-                insertar_pago(str(fecha), comprobante, prov_pago_final, monto, observacion)
-                st.success(f"¡Pago de ${monto:,.2f} registrado con éxito para {prov_pago_final}!")
+                remision_final = "General"
+                if "Factura: " in factura_seleccionada:
+                    remision_final = factura_seleccionada.split("|")[0].replace("Factura:", "").strip()
+
+                insertar_pago(str(fecha), comprobante, prov_pago_limpio, monto, observacion, remision_final)
+                st.success(f"¡Pago de ${monto:,.2f} registrado con éxito para {prov_pago_limpio} (Factura: {remision_final})!")
                 st.rerun()
 
 # ----------------------------------------------------
-# OPCIÓN 4: HISTORIAL DETALLADO
+# OPCIÓN 4: HISTORIAL DETALLADO (CON SALDO POR FACTURA)
 # ----------------------------------------------------
 elif menu == "📜 Historial Detallado":
     st.title("📜 Historial Detallado de Transacciones")
@@ -441,30 +469,58 @@ elif menu == "📜 Historial Detallado":
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Comprado", f"${tot_compras:,.2f}")
     c2.metric("Total Abonado", f"${tot_pagos:,.2f}")
-    c3.metric("Saldo Pendiente", f"${saldo:,.2f}")
+    c3.metric("Saldo Pendiente Global", f"${saldo:,.2f}")
 
     st.markdown("---")
 
-    st.subheader(f"📦 Compras y Facturas ({prov_seleccionado})")
+    st.subheader(f"📦 Estado de Facturas y Remisiones ({prov_seleccionado})")
     if not df_c.empty:
         df_c_disp = df_c.copy()
+        
+        # Calcular abonos y saldos por cada factura
+        abonos_por_factura = []
+        saldos_por_factura = []
+        
+        for _, row in df_c_disp.iterrows():
+            rem = str(row['remision'])
+            prov = row['proveedor']
+            if not df_p.empty and 'remision_asociada' in df_p.columns:
+                abono_f = df_p[(df_p['proveedor'] == prov) & (df_p['remision_asociada'] == rem)]['monto'].sum()
+            else:
+                abono_f = 0
+            saldo_f = row['total'] - abono_f
+            abonos_por_factura.append(abono_f)
+            saldos_por_factura.append(saldo_f)
+
+        df_c_disp['Total Abonado'] = abonos_por_factura
+        df_c_disp['Saldo Factura'] = saldos_por_factura
+
         df_c_disp['precio_kg'] = df_c_disp['precio_kg'].apply(lambda x: f"${x:,.2f}")
         df_c_disp['total'] = df_c_disp['total'].apply(lambda x: f"${x:,.2f}")
+        df_c_disp['Total Abonado'] = df_c_disp['Total Abonado'].apply(lambda x: f"${x:,.2f}")
+        df_c_disp['Saldo Factura'] = df_c_disp['Saldo Factura'].apply(lambda x: f"${x:,.2f}")
+        
         df_c_disp = df_c_disp.rename(columns={
             'fruta': 'item_concepto',
             'kilos': 'cantidad_kilos',
-            'precio_kg': 'precio_unitario'
+            'precio_kg': 'precio_unitario',
+            'remision': 'factura_remision',
+            'total': 'valor_factura'
         })
-        cols_c = [c for c in ['fecha', 'remision', 'proveedor', 'item_concepto', 'cantidad_kilos', 'precio_unitario', 'total'] if c in df_c_disp.columns]
+        cols_c = [c for c in ['fecha', 'factura_remision', 'proveedor', 'item_concepto', 'cantidad_kilos', 'precio_unitario', 'valor_factura', 'Total Abonado', 'Saldo Factura'] if c in df_c_disp.columns]
         st.dataframe(df_c_disp[cols_c], use_container_width=True)
     else:
         st.info("No hay compras ni facturas registradas.")
 
-    st.subheader(f"💵 Abonos y Pagos ({prov_seleccionado})")
+    st.subheader(f"💵 Historial de Abonos y Pagos ({prov_seleccionado})")
     if not df_p.empty:
         df_p_disp = df_p.copy()
         df_p_disp['monto'] = df_p_disp['monto'].apply(lambda x: f"${x:,.2f}")
-        cols_p = [c for c in ['fecha', 'comprobante', 'proveedor', 'monto', 'observacion'] if c in df_p_disp.columns]
+        if 'remision_asociada' not in df_p_disp.columns:
+            df_p_disp['remision_asociada'] = 'General'
+        df_p_disp['remision_asociada'] = df_p_disp['remision_asociada'].fillna('General')
+        df_p_disp = df_p_disp.rename(columns={'remision_asociada': 'factura_asociada'})
+        cols_p = [c for c in ['fecha', 'comprobante', 'proveedor', 'factura_asociada', 'monto', 'observacion'] if c in df_p_disp.columns]
         st.dataframe(df_p_disp[cols_p], use_container_width=True)
     else:
         st.info("No hay pagos registrados.")
