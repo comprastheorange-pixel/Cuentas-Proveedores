@@ -42,7 +42,7 @@ def init_db():
         )
     ''')
     
-    # Migración automática: asegurar que la columna 'observacion' exista si la tabla se creó antes
+    # Migración automática: asegurar que la columna 'observacion' exista
     c.execute("PRAGMA table_info(pagos)")
     columnas = [col[1] for col in c.fetchall()]
     if 'observacion' not in columnas:
@@ -333,21 +333,20 @@ elif menu == "📦 Registrar Compra / Factura":
     provs_pagos = df_pagos['proveedor'].dropna().unique().tolist() if not df_pagos.empty else []
     todos_proveedores = sorted(list(set(provs_compras + provs_pagos)))
 
+    # Selección de proveedor fuera del form para refresco inmediato
+    opcion_prov = st.radio("¿Cómo deseas ingresar el proveedor?", ["Escribir nombre (Nuevo o Existente)", "Seleccionar de la lista de existentes"], horizontal=True)
+
+    if opcion_prov == "Seleccionar de la lista de existentes" and todos_proveedores:
+        proveedor_seleccionado = st.selectbox("Proveedor Existente:", todos_proveedores)
+    else:
+        proveedor_seleccionado = st.text_input("Nombre del Proveedor (Escribe libremente):")
+
     with st.form("form_compra", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
             fecha = st.date_input("Fecha de Factura / Registro", datetime.today())
             remision = st.text_input("Número de Remisión / Factura")
             
-            if todos_proveedores:
-                opcion_prov = st.radio("Seleccionar Proveedor:", ["Elegir existente", "Escribir nuevo"])
-                if opcion_prov == "Elegir existente":
-                    proveedor = st.selectbox("Proveedor", todos_proveedores)
-                else:
-                    proveedor = st.text_input("Nombre del Nuevo Proveedor").strip().upper()
-            else:
-                proveedor = st.text_input("Nombre del Proveedor").strip().upper()
-
         with col2:
             fruta = st.text_input("Ítem / Concepto (Ej: Fruta, Periódico, Bolsas, Empaques)").strip().upper()
             kilos = st.number_input("Cantidad / Kilos", min_value=0.0, step=0.1)
@@ -358,11 +357,12 @@ elif menu == "📦 Registrar Compra / Factura":
 
         submitted = st.form_submit_button("Guardar Registro de Compra")
         if submitted:
-            if not proveedor or not remision or not fruta or kilos <= 0 or precio_kg <= 0:
+            prov_final = proveedor_seleccionado.strip().upper() if proveedor_seleccionado else ""
+            if not prov_final or not remision or not fruta or kilos <= 0 or precio_kg <= 0:
                 st.error("Por favor completa todos los campos correctamente.")
             else:
-                insertar_compra(str(fecha), remision, proveedor, fruta, kilos, precio_kg, total_calculado)
-                st.success(f"¡Compra guardada con éxito! Total: ${total_calculado:,.2f}")
+                insertar_compra(str(fecha), remision, prov_final, fruta, kilos, precio_kg, total_calculado)
+                st.success(f"¡Compra guardada con éxito para {prov_final}! Total: ${total_calculado:,.2f}")
                 st.rerun()
 
 # ----------------------------------------------------
@@ -375,20 +375,18 @@ elif menu == "💵 Registrar Pago / Abono":
     provs_pagos = df_pagos['proveedor'].dropna().unique().tolist() if not df_pagos.empty else []
     todos_proveedores = sorted(list(set(provs_compras + provs_pagos)))
 
+    opcion_prov_pago = st.radio("¿Cómo deseas ingresar el proveedor?", ["Escribir nombre (Nuevo o Existente)", "Seleccionar de la lista de existentes"], horizontal=True, key="pago_radio")
+
+    if opcion_prov_pago == "Seleccionar de la lista de existentes" and todos_proveedores:
+        proveedor_pago_sel = st.selectbox("Proveedor Existente:", todos_proveedores, key="pago_select")
+    else:
+        proveedor_pago_sel = st.text_input("Nombre del Proveedor (Escribe libremente):", key="pago_text")
+
     with st.form("form_pago", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
             fecha = st.date_input("Fecha de Pago", datetime.today())
             comprobante = st.text_input("Número de Comprobante / Transferencia")
-            
-            if todos_proveedores:
-                opcion_prov = st.radio("Seleccionar Proveedor:", ["Elegir existente", "Escribir nuevo"])
-                if opcion_prov == "Elegir existente":
-                    proveedor = st.selectbox("Proveedor", todos_proveedores)
-                else:
-                    proveedor = st.text_input("Nombre del Nuevo Proveedor").strip().upper()
-            else:
-                proveedor = st.text_input("Nombre del Proveedor").strip().upper()
 
         with col2:
             monto = st.number_input("Monto Abonado ($)", min_value=0.0, step=1000.0)
@@ -396,11 +394,12 @@ elif menu == "💵 Registrar Pago / Abono":
 
         submitted = st.form_submit_button("Guardar Pago / Abono")
         if submitted:
-            if not proveedor or monto <= 0:
+            prov_pago_final = proveedor_pago_sel.strip().upper() if proveedor_pago_sel else ""
+            if not prov_pago_final or monto <= 0:
                 st.error("Por favor ingresa un proveedor válido y un monto mayor a cero.")
             else:
-                insertar_pago(str(fecha), comprobante, proveedor, monto, observacion)
-                st.success(f"¡Pago de ${monto:,.2f} registrado con éxito para {proveedor}!")
+                insertar_pago(str(fecha), comprobante, prov_pago_final, monto, observacion)
+                st.success(f"¡Pago de ${monto:,.2f} registrado con éxito para {prov_pago_final}!")
                 st.rerun()
 
 # ----------------------------------------------------
