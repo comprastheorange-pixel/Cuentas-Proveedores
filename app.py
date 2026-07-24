@@ -7,6 +7,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 import io
+import re
 
 # Configuración de la página
 st.set_page_config(page_title="Control de Deudas - Proveedores", page_icon="📈", layout="wide")
@@ -68,6 +69,18 @@ def obtener_pagos():
     df = pd.read_sql_query("SELECT * FROM pagos ORDER BY fecha DESC, id DESC", conn)
     conn.close()
     return df
+
+def generar_siguiente_codigo(prefijo, lista_codigos):
+    max_num = 0
+    pattern = re.compile(rf'^{prefijo}-(\d+)$', re.IGNORECASE)
+    for cod in lista_codigos:
+        if cod:
+            match = pattern.match(str(cod).strip())
+            if match:
+                num = int(match.group(1))
+                if num > max_num:
+                    max_num = num
+    return f"{prefijo}-{(max_num + 1):03d}"
 
 def insertar_compra(fecha, remision, proveedor, fruta, kilos, precio_kg, total):
     conn = sqlite3.connect(DB_NAME)
@@ -337,6 +350,10 @@ if menu == "📊 Reporte de Deudas (Para el Jefe)":
 elif menu == "📦 Registrar Compra / Factura":
     st.title("📦 Registrar Compra o Insumo A Crédito")
 
+    # Calcular consecutivo de Factura FC-xxx
+    lista_remisiones = df_compras['remision'].tolist() if not df_compras.empty else []
+    siguiente_fc = generar_siguiente_codigo("FC", lista_remisiones)
+
     opcion_prov = st.radio("¿Cómo deseas ingresar el proveedor?", ["Escribir nombre (Nuevo o Existente)", "Seleccionar de la lista de existentes"], horizontal=True)
 
     if opcion_prov == "Seleccionar de la lista de existentes" and todos_proveedores:
@@ -348,7 +365,7 @@ elif menu == "📦 Registrar Compra / Factura":
         col1, col2 = st.columns(2)
         with col1:
             fecha = st.date_input("Fecha de Factura / Registro", datetime.today())
-            remision = st.text_input("Número de Remisión / Factura")
+            remision = st.text_input("Número de Remisión / Factura", value=siguiente_fc)
             
         with col2:
             fruta = st.text_input("Ítem / Concepto (Ej: Fruta, Periódico, Bolsas, Empaques)").strip().upper()
@@ -365,7 +382,7 @@ elif menu == "📦 Registrar Compra / Factura":
                 st.error("Por favor completa todos los campos correctamente.")
             else:
                 insertar_compra(str(fecha), remision, prov_final, fruta, kilos, precio_kg, total_calculado)
-                st.success(f"¡Compra guardada con éxito para {prov_final}! Total: ${total_calculado:,.2f}")
+                st.success(f"¡Compra guardada con éxito para {prov_final}! Número: {remision} | Total: ${total_calculado:,.2f}")
                 st.rerun()
 
 # ----------------------------------------------------
@@ -373,6 +390,10 @@ elif menu == "📦 Registrar Compra / Factura":
 # ----------------------------------------------------
 elif menu == "💵 Registrar Pago / Abono":
     st.title("💵 Registrar Pago o Abono a Proveedor")
+
+    # Calcular consecutivo de Pago RP-xxx
+    lista_comprobantes = df_pagos['comprobante'].tolist() if not df_pagos.empty else []
+    siguiente_rp = generar_siguiente_codigo("RP", lista_comprobantes)
 
     opcion_prov_pago = st.radio("¿Cómo deseas ingresar el proveedor?", ["Escribir nombre (Nuevo o Existente)", "Seleccionar de la lista de existentes"], horizontal=True, key="pago_radio")
 
@@ -383,7 +404,7 @@ elif menu == "💵 Registrar Pago / Abono":
 
     prov_pago_limpio = proveedor_pago_sel.strip().upper() if proveedor_pago_sel else ""
 
-    # Búsqueda insensible a mayúsculas/minúsculas para cargar facturas
+    # Búsqueda de facturas del proveedor
     opciones_facturas = ["General / Sin Factura Específica"]
     if prov_pago_limpio and not df_compras.empty:
         df_c_prov = df_compras[df_compras['proveedor'].astype(str).str.strip().str.upper() == prov_pago_limpio]
@@ -404,7 +425,7 @@ elif menu == "💵 Registrar Pago / Abono":
         col1, col2 = st.columns(2)
         with col1:
             fecha = st.date_input("Fecha de Pago", datetime.today())
-            comprobante = st.text_input("Número de Comprobante / Transferencia")
+            comprobante = st.text_input("Número de Comprobante / Transferencia", value=siguiente_rp)
 
         with col2:
             monto = st.number_input("Monto Abonado ($)", min_value=0.0, step=1000.0)
@@ -420,7 +441,7 @@ elif menu == "💵 Registrar Pago / Abono":
                     remision_final = factura_seleccionada.split("|")[0].replace("Factura:", "").strip()
 
                 insertar_pago(str(fecha), comprobante, prov_pago_limpio, monto, observacion, remision_final)
-                st.success(f"¡Pago de ${monto:,.2f} registrado con éxito para {prov_pago_limpio} (Factura: {remision_final})!")
+                st.success(f"¡Pago de ${monto:,.2f} registrado con éxito para {prov_pago_limpio} (Comp: {comprobante} | Factura: {remision_final})!")
                 st.rerun()
 
 # ----------------------------------------------------
