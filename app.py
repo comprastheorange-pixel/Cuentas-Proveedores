@@ -75,7 +75,7 @@ def insertar_compra(fecha, remision, proveedor, fruta, kilos, precio_kg, total):
     c.execute('''
         INSERT INTO compras (fecha, remision, proveedor, fruta, kilos, precio_kg, total)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (fecha, remision, proveedor, fruta, kilos, precio_kg, total))
+    ''', (fecha, remision, proveedor.strip().upper(), fruta, kilos, precio_kg, total))
     conn.commit()
     conn.close()
 
@@ -85,7 +85,7 @@ def insertar_pago(fecha, comprobante, proveedor, monto, observacion, remision_as
     c.execute('''
         INSERT INTO pagos (fecha, comprobante, proveedor, monto, observacion, remision_asociada)
         VALUES (?, ?, ?, ?, ?, ?)
-    ''', (fecha, comprobante, proveedor, monto, observacion, remision_asociada))
+    ''', (fecha, comprobante, proveedor.strip().upper(), monto, observacion, remision_asociada))
     conn.commit()
     conn.close()
 
@@ -268,15 +268,16 @@ menu = st.sidebar.radio(
 df_compras = obtener_compras()
 df_pagos = obtener_pagos()
 
+# Unificar lista de proveedores limpios en Mayúsculas
+provs_c = df_compras['proveedor'].dropna().astype(str).str.strip().str.upper().tolist() if not df_compras.empty else []
+provs_p = df_pagos['proveedor'].dropna().astype(str).str.strip().str.upper().tolist() if not df_pagos.empty else []
+todos_proveedores = sorted(list(set(provs_c + provs_p)))
+
 # ----------------------------------------------------
 # OPCIÓN 1: REPORTE GENERAL DE DEUDAS
 # ----------------------------------------------------
 if menu == "📊 Reporte de Deudas (Para el Jefe)":
     st.title("📊 Resumen de Deudas a Proveedores")
-
-    provs_compras = df_compras['proveedor'].dropna().unique().tolist() if not df_compras.empty else []
-    provs_pagos = df_pagos['proveedor'].dropna().unique().tolist() if not df_pagos.empty else []
-    todos_proveedores = sorted(list(set(provs_compras + provs_pagos)))
 
     if not todos_proveedores:
         st.info("Aún no se han registrado compras ni pagos en el sistema.")
@@ -286,8 +287,8 @@ if menu == "📊 Reporte de Deudas (Para el Jefe)":
         tot_pago_gen = 0
 
         for prov in todos_proveedores:
-            c_p = df_compras[df_compras['proveedor'] == prov]['total'].sum() if not df_compras.empty else 0
-            p_p = df_pagos[df_pagos['proveedor'] == prov]['monto'].sum() if not df_pagos.empty else 0
+            c_p = df_compras[df_compras['proveedor'].astype(str).str.strip().str.upper() == prov]['total'].sum() if not df_compras.empty else 0
+            p_p = df_pagos[df_pagos['proveedor'].astype(str).str.strip().str.upper() == prov]['monto'].sum() if not df_pagos.empty else 0
             saldo_p = c_p - p_p
 
             tot_compra_gen += c_p
@@ -336,10 +337,6 @@ if menu == "📊 Reporte de Deudas (Para el Jefe)":
 elif menu == "📦 Registrar Compra / Factura":
     st.title("📦 Registrar Compra o Insumo A Crédito")
 
-    provs_compras = df_compras['proveedor'].dropna().unique().tolist() if not df_compras.empty else []
-    provs_pagos = df_pagos['proveedor'].dropna().unique().tolist() if not df_pagos.empty else []
-    todos_proveedores = sorted(list(set(provs_compras + provs_pagos)))
-
     opcion_prov = st.radio("¿Cómo deseas ingresar el proveedor?", ["Escribir nombre (Nuevo o Existente)", "Seleccionar de la lista de existentes"], horizontal=True)
 
     if opcion_prov == "Seleccionar de la lista de existentes" and todos_proveedores:
@@ -372,14 +369,10 @@ elif menu == "📦 Registrar Compra / Factura":
                 st.rerun()
 
 # ----------------------------------------------------
-# OPCIÓN 3: REGISTRAR PAGO / ABONO (CON ASOCIACIÓN A FACTURA)
+# OPCIÓN 3: REGISTRAR PAGO / ABONO
 # ----------------------------------------------------
 elif menu == "💵 Registrar Pago / Abono":
     st.title("💵 Registrar Pago o Abono a Proveedor")
-
-    provs_compras = df_compras['proveedor'].dropna().unique().tolist() if not df_compras.empty else []
-    provs_pagos = df_pagos['proveedor'].dropna().unique().tolist() if not df_pagos.empty else []
-    todos_proveedores = sorted(list(set(provs_compras + provs_pagos)))
 
     opcion_prov_pago = st.radio("¿Cómo deseas ingresar el proveedor?", ["Escribir nombre (Nuevo o Existente)", "Seleccionar de la lista de existentes"], horizontal=True, key="pago_radio")
 
@@ -390,16 +383,16 @@ elif menu == "💵 Registrar Pago / Abono":
 
     prov_pago_limpio = proveedor_pago_sel.strip().upper() if proveedor_pago_sel else ""
 
-    # Obtener facturas/remisiones pendientes de este proveedor
-    opciones_facturas = ["General / Sin Factura Especifica"]
+    # Búsqueda insensible a mayúsculas/minúsculas para cargar facturas
+    opciones_facturas = ["General / Sin Factura Específica"]
     if prov_pago_limpio and not df_compras.empty:
-        df_c_prov = df_compras[df_compras['proveedor'] == prov_pago_limpio]
+        df_c_prov = df_compras[df_compras['proveedor'].astype(str).str.strip().str.upper() == prov_pago_limpio]
         for _, row in df_c_prov.iterrows():
             rem = str(row['remision'])
             tot = row['total']
-            # Calcular abonos previos a esta remisión
             if not df_pagos.empty and 'remision_asociada' in df_pagos.columns:
-                abono_previo = df_pagos[(df_pagos['proveedor'] == prov_pago_limpio) & (df_pagos['remision_asociada'] == rem)]['monto'].sum()
+                df_p_prov = df_pagos[df_pagos['proveedor'].astype(str).str.strip().str.upper() == prov_pago_limpio]
+                abono_previo = df_p_prov[df_p_prov['remision_asociada'].astype(str) == rem]['monto'].sum()
             else:
                 abono_previo = 0
             saldo_rem = tot - abono_previo
@@ -431,14 +424,10 @@ elif menu == "💵 Registrar Pago / Abono":
                 st.rerun()
 
 # ----------------------------------------------------
-# OPCIÓN 4: HISTORIAL DETALLADO (CON SALDO POR FACTURA)
+# OPCIÓN 4: HISTORIAL DETALLADO
 # ----------------------------------------------------
 elif menu == "📜 Historial Detallado":
     st.title("📜 Historial Detallado de Transacciones")
-
-    provs_compras = df_compras['proveedor'].dropna().unique().tolist() if not df_compras.empty else []
-    provs_pagos = df_pagos['proveedor'].dropna().unique().tolist() if not df_pagos.empty else []
-    todos_proveedores = sorted(list(set(provs_compras + provs_pagos)))
 
     col_select, col_pdf = st.columns([2, 2])
 
@@ -449,8 +438,8 @@ elif menu == "📜 Historial Detallado":
         df_c = df_compras.copy()
         df_p = df_pagos.copy()
     else:
-        df_c = df_compras[df_compras['proveedor'] == prov_seleccionado].copy()
-        df_p = df_pagos[df_pagos['proveedor'] == prov_seleccionado].copy()
+        df_c = df_compras[df_compras['proveedor'].astype(str).str.strip().str.upper() == prov_seleccionado].copy() if not df_compras.empty else df_compras
+        df_p = df_pagos[df_pagos['proveedor'].astype(str).str.strip().str.upper() == prov_seleccionado].copy() if not df_pagos.empty else df_pagos
 
     tot_compras = df_c['total'].sum() if not df_c.empty else 0
     tot_pagos = df_p['monto'].sum() if not df_p.empty else 0
@@ -477,15 +466,15 @@ elif menu == "📜 Historial Detallado":
     if not df_c.empty:
         df_c_disp = df_c.copy()
         
-        # Calcular abonos y saldos por cada factura
         abonos_por_factura = []
         saldos_por_factura = []
         
         for _, row in df_c_disp.iterrows():
             rem = str(row['remision'])
-            prov = row['proveedor']
+            prov = str(row['proveedor']).strip().upper()
             if not df_p.empty and 'remision_asociada' in df_p.columns:
-                abono_f = df_p[(df_p['proveedor'] == prov) & (df_p['remision_asociada'] == rem)]['monto'].sum()
+                df_p_prov = df_p[df_p['proveedor'].astype(str).str.strip().str.upper() == prov]
+                abono_f = df_p_prov[df_p_prov['remision_asociada'].astype(str) == rem]['monto'].sum()
             else:
                 abono_f = 0
             saldo_f = row['total'] - abono_f
