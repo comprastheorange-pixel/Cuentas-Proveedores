@@ -118,6 +118,102 @@ def eliminar_registro(tabla, id_registro):
     conn.close()
 
 # --- FUNCIONES GENERADORAS DE PDF ---
+def generar_pdf_presupuesto_semanal(f_inicio, f_fin, meta, contado, abonos, ejecutado, disponible, df_c_sem, df_p_sem):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    story = []
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(name='TitleStyle', parent=styles['Title'], fontSize=16, leading=20, textColor=colors.HexColor('#1E3A8A'))
+    subtitle_style = ParagraphStyle(name='SubTitleStyle', parent=styles['Normal'], fontSize=10, leading=12, textColor=colors.gray)
+    h2_style = ParagraphStyle(name='H2Style', parent=styles['Heading2'], fontSize=11, leading=13, textColor=colors.HexColor('#1F2937'))
+
+    story.append(Paragraph("<b>INFORME DE PRESUPUESTO SEMANAL</b>", title_style))
+    story.append(Paragraph(f"Período: {f_inicio} al {f_fin} | Fecha Emisión: {datetime.now().strftime('%Y-%m-%d %H:%M')}", subtitle_style))
+    story.append(Spacer(1, 15))
+
+    # Resumen Métricas
+    data_resumen = [
+        ["Meta Asignada", "Compras Contado", "Abonos / Pagos", "Ejecutado Total", "Disponible / Saldo"],
+        [f"${meta:,.2f}", f"${contado:,.2f}", f"${abonos:,.2f}", f"${ejecutado:,.2f}", f"${disponible:,.2f}"]
+    ]
+    t_res = Table(data_resumen, colWidths=[108, 108, 108, 108, 110])
+    t_res.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#F3F4F6')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,-1), 8),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E5E7EB')),
+        ('FONTNAME', (0,1), (-1,1), 'Helvetica-Bold'),
+        ('TEXTCOLOR', (4,1), (4,1), colors.HexColor('#059669') if disponible >= 0 else colors.HexColor('#DC2626')),
+    ]))
+    story.append(t_res)
+    story.append(Spacer(1, 15))
+
+    # Tabla Compras de Contado
+    story.append(Paragraph("<b>Compras de Contado de la Semana</b>", h2_style))
+    story.append(Spacer(1, 5))
+    if not df_c_sem.empty:
+        t_c_data = [["Fecha", "Remisión", "Proveedor", "Concepto", "Total"]]
+        for _, r in df_c_sem.iterrows():
+            t_c_data.append([
+                str(r.get('fecha', '-')),
+                str(r.get('remision', '-')),
+                str(r.get('proveedor', '-')),
+                str(r.get('fruta', '-')),
+                f"${r.get('total', 0):,.2f}"
+            ])
+        t_c = Table(t_c_data, colWidths=[70, 80, 150, 130, 110])
+        t_c.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#3B82F6')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,-1), 8),
+            ('ALIGN', (-1,0), (-1,-1), 'RIGHT'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E5E7EB')),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#F9FAFB')]),
+        ]))
+        story.append(t_c)
+    else:
+        story.append(Paragraph("No hay compras de contado registradas en este período.", styles['Normal']))
+
+    story.append(Spacer(1, 15))
+
+    # Tabla Abonos y Pagos
+    story.append(Paragraph("<b>Abonos y Pagos Efectuados en la Semana</b>", h2_style))
+    story.append(Spacer(1, 5))
+    if not df_p_sem.empty:
+        t_p_data = [["Fecha", "Comprobante", "Proveedor", "Factura Asociada", "Monto"]]
+        for _, r in df_p_sem.iterrows():
+            rem = r.get('remision_asociada', 'General')
+            if pd.isna(rem) or str(rem).strip() == '':
+                rem = 'General'
+            t_p_data.append([
+                str(r.get('fecha', '-')),
+                str(r.get('comprobante', '-')),
+                str(r.get('proveedor', '-')),
+                str(rem),
+                f"${r.get('monto', 0):,.2f}"
+            ])
+        t_p = Table(t_p_data, colWidths=[70, 90, 160, 110, 110])
+        t_p.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#10B981')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,-1), 8),
+            ('ALIGN', (-1,0), (-1,-1), 'RIGHT'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E5E7EB')),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#F9FAFB')]),
+        ]))
+        story.append(t_p)
+    else:
+        story.append(Paragraph("No hay abonos ni pagos registrados en este período.", styles['Normal']))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def generar_pdf_resumen(df_resumen, total_compra_gen, total_pago_gen, saldo_gen):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -379,21 +475,25 @@ elif menu == "🎯 Control de Presupuesto Semanal":
     str_f_fin = str(f_fin)
 
     # 1. Compras de Contado de la semana
+    df_c_sem = pd.DataFrame()
     if not df_compras.empty:
-        compras_contado_sem = df_compras[
+        df_c_sem = df_compras[
             (df_compras['tipo_pago'] == 'DE CONTADO') & 
             (df_compras['fecha'] >= str_f_inicio) & 
             (df_compras['fecha'] <= str_f_fin)
-        ]['total'].sum()
+        ]
+        compras_contado_sem = df_c_sem['total'].sum()
     else:
         compras_contado_sem = 0.0
 
-    # 2. Pagos/Abonos realizados en la semana (Facturas crédito o pagos generales)
+    # 2. Pagos/Abonos realizados en la semana
+    df_p_sem = pd.DataFrame()
     if not df_pagos.empty:
-        pagos_sem = df_pagos[
+        df_p_sem = df_pagos[
             (df_pagos['fecha'] >= str_f_inicio) & 
             (df_pagos['fecha'] <= str_f_fin)
-        ]['monto'].sum()
+        ]
+        pagos_sem = df_p_sem['monto'].sum()
     else:
         pagos_sem = 0.0
 
@@ -402,7 +502,25 @@ elif menu == "🎯 Control de Presupuesto Semanal":
     porcentaje_usado = min(total_ejecutado / presupuesto_limite, 1.0) if presupuesto_limite > 0 else 1.0
     pct_real = (total_ejecutado / presupuesto_limite * 100) if presupuesto_limite > 0 else 100
 
-    st.markdown("### 📊 Estado Actual del Presupuesto")
+    col_title, col_dl = st.columns([3, 1])
+    with col_title:
+        st.markdown("### 📊 Estado Actual del Presupuesto")
+
+    with col_dl:
+        # Generar PDF para el presupuesto semanal
+        pdf_presupuesto_bytes = generar_pdf_presupuesto_semanal(
+            str_f_inicio, str_f_fin, presupuesto_limite,
+            compras_contado_sem, pagos_sem, total_ejecutado, diferencia,
+            df_c_sem, df_p_sem
+        )
+        
+        st.download_button(
+            label="📄 Descargar Informe Presupuesto (PDF)",
+            data=pdf_presupuesto_bytes,
+            file_name=f"Presupuesto_Semanal_{str_f_inicio}_al_{str_f_fin}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
 
     # Mostrar barra de progreso con alerta según nivel
     st.progress(porcentaje_usado)
@@ -425,36 +543,21 @@ elif menu == "🎯 Control de Presupuesto Semanal":
     col_t1, col_t2 = st.columns(2)
     with col_t1:
         st.subheader("🛒 Compras de Contado de esta Semana")
-        if not df_compras.empty:
-            df_c_sem = df_compras[
-                (df_compras['tipo_pago'] == 'DE CONTADO') & 
-                (df_compras['fecha'] >= str_f_inicio) & 
-                (df_compras['fecha'] <= str_f_fin)
-            ]
-            if not df_c_sem.empty:
-                df_c_sem_d = df_c_sem[['fecha', 'remision', 'proveedor', 'fruta', 'total']].copy()
-                df_c_sem_d['total'] = df_c_sem_d['total'].apply(lambda x: f"${x:,.2f}")
-                st.dataframe(df_c_sem_d, use_container_width=True)
-            else:
-                st.info("No hay compras de contado registradas en este rango de fechas.")
+        if not df_c_sem.empty:
+            df_c_sem_d = df_c_sem[['fecha', 'remision', 'proveedor', 'fruta', 'total']].copy()
+            df_c_sem_d['total'] = df_c_sem_d['total'].apply(lambda x: f"${x:,.2f}")
+            st.dataframe(df_c_sem_d, use_container_width=True)
         else:
-            st.info("No hay compras registradas.")
+            st.info("No hay compras de contado registradas en este rango de fechas.")
 
     with col_t2:
         st.subheader("💵 Abonos / Pagos Efectuados esta Semana")
-        if not df_pagos.empty:
-            df_p_sem = df_pagos[
-                (df_pagos['fecha'] >= str_f_inicio) & 
-                (df_pagos['fecha'] <= str_f_fin)
-            ]
-            if not df_p_sem.empty:
-                df_p_sem_d = df_p_sem[['fecha', 'comprobante', 'proveedor', 'remision_asociada', 'monto']].copy()
-                df_p_sem_d['monto'] = df_p_sem_d['monto'].apply(lambda x: f"${x:,.2f}")
-                st.dataframe(df_p_sem_d, use_container_width=True)
-            else:
-                st.info("No hay pagos registrados en este rango de fechas.")
+        if not df_p_sem.empty:
+            df_p_sem_d = df_p_sem[['fecha', 'comprobante', 'proveedor', 'remision_asociada', 'monto']].copy()
+            df_p_sem_d['monto'] = df_p_sem_d['monto'].apply(lambda x: f"${x:,.2f}")
+            st.dataframe(df_p_sem_d, use_container_width=True)
         else:
-            st.info("No hay pagos registrados.")
+            st.info("No hay pagos registrados en este rango de fechas.")
 
 # ----------------------------------------------------
 # OPCIÓN 3: REGISTRAR COMPRA / FACTURA
