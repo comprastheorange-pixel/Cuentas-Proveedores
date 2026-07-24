@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -10,7 +10,7 @@ import io
 import re
 
 # Configuración de la página
-st.set_page_config(page_title="Control de Deudas - Proveedores", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Control de Deudas y Presupuesto", page_icon="📈", layout="wide")
 
 # --- CONEXIÓN A BASE DE DATOS Y TABLAS ---
 DB_NAME = "proveedores.db"
@@ -28,7 +28,8 @@ def init_db():
             fruta TEXT,
             kilos REAL,
             precio_kg REAL,
-            total REAL
+            total REAL,
+            tipo_pago TEXT DEFAULT 'A CRÉDITO'
         )
     ''')
     # Tabla de Abonos y Pagos
@@ -44,7 +45,12 @@ def init_db():
         )
     ''')
     
-    # Migraciones automáticas para bases de datos existentes
+    # Migraciones automáticas para columnas faltantes
+    c.execute("PRAGMA table_info(compras)")
+    columnas_compras = [col[1] for col in c.fetchall()]
+    if 'tipo_pago' not in columnas_compras:
+        c.execute("ALTER TABLE compras ADD COLUMN tipo_pago TEXT DEFAULT 'A CRÉDITO'")
+
     c.execute("PRAGMA table_info(pagos)")
     columnas_pagos = [col[1] for col in c.fetchall()]
     if 'observacion' not in columnas_pagos:
@@ -62,6 +68,8 @@ def obtener_compras():
     conn = sqlite3.connect(DB_NAME)
     df = pd.read_sql_query("SELECT * FROM compras ORDER BY fecha DESC, id DESC", conn)
     conn.close()
+    if not df.empty and 'tipo_pago' in df.columns:
+        df['tipo_pago'] = df['tipo_pago'].fillna('A CRÉDITO')
     return df
 
 def obtener_pagos():
@@ -82,13 +90,13 @@ def generar_siguiente_codigo(prefijo, lista_codigos):
                     max_num = num
     return f"{prefijo}-{(max_num + 1):03d}"
 
-def insertar_compra(fecha, remision, proveedor, fruta, kilos, precio_kg, total):
+def insertar_compra(fecha, remision, proveedor, fruta, kilos, precio_kg, total, tipo_pago):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''
-        INSERT INTO compras (fecha, remision, proveedor, fruta, kilos, precio_kg, total)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (fecha, remision, proveedor.strip().upper(), fruta, kilos, precio_kg, total))
+        INSERT INTO compras (fecha, remision, proveedor, fruta, kilos, precio_kg, total, tipo_pago)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (fecha, remision, proveedor.strip().upper(), fruta, kilos, precio_kg, total, tipo_pago))
     conn.commit()
     conn.close()
 
@@ -124,7 +132,7 @@ def generar_pdf_resumen(df_resumen, total_compra_gen, total_pago_gen, saldo_gen)
     story.append(Spacer(1, 15))
 
     data_resumen_box = [
-        ["Total Comprado", "Total Abonado", "Saldo Pendiente Total"],
+        ["Total Comprado (A Crédito)", "Total Abonado", "Saldo Pendiente Total"],
         [f"${total_compra_gen:,.2f}", f"${total_pago_gen:,.2f}", f"${saldo_gen:,.2f}"]
     ]
     t_resumen = Table(data_resumen_box, colWidths=[180, 180, 180])
@@ -186,7 +194,7 @@ def generar_pdf_historial(df_compras, df_pagos, proveedor_nombre, total_c, total
 
     saldo = total_c - total_p
     data_resumen = [
-        ["Total Comprado", "Total Abonado", "Saldo Pendiente"],
+        ["Total Comprado (A Crédito)", "Total Abonado", "Saldo Pendiente"],
         [f"${total_c:,.2f}", f"${total_p:,.2f}", f"${saldo:,.2f}"]
     ]
     t_resumen = Table(data_resumen, colWidths=[180, 180, 180])
@@ -201,7 +209,6 @@ def generar_pdf_historial(df_compras, df_pagos, proveedor_nombre, total_c, total
     story.append(t_resumen)
     story.append(Spacer(1, 15))
 
-    # Compras / Facturas
     story.append(Paragraph("<b>Registro de Compras / Facturas A Crédito</b>", h2_style))
     story.append(Spacer(1, 5))
 
@@ -232,7 +239,6 @@ def generar_pdf_historial(df_compras, df_pagos, proveedor_nombre, total_c, total
 
     story.append(Spacer(1, 15))
 
-    # Pagos
     story.append(Paragraph("<b>Abonos y Pagos Realizados</b>", h2_style))
     story.append(Spacer(1, 5))
 
@@ -275,7 +281,7 @@ def generar_pdf_historial(df_compras, df_pagos, proveedor_nombre, total_c, total
 st.sidebar.title("Selecciona una opción:")
 menu = st.sidebar.radio(
     "",
-    ["📊 Reporte de Deudas (Para el Jefe)", "📦 Registrar Compra / Factura", "💵 Registrar Pago / Abono", "📜 Historial Detallado", "🗑️ Eliminar Registros"]
+    ["📊 Reporte de Deudas (Para el Jefe)", "🎯 Control de Presupuesto Semanal", "📦 Registrar Compra / Factura", "💵 Registrar Pago / Abono", "📜 Historial Detallado", "🗑️ Eliminar Registros"]
 )
 
 df_compras = obtener_compras()
@@ -287,20 +293,30 @@ provs_p = df_pagos['proveedor'].dropna().astype(str).str.strip().str.upper().tol
 todos_proveedores = sorted(list(set(provs_c + provs_p)))
 
 # ----------------------------------------------------
+# CÁLCULOS DE PRESUPUESTO SEMANAL
+# ----------------------------------------------------
+hoy = datetime.today().date()
+inicio_semana = hoy - timedelta(days=hoy.weekday()) # Lunes de la semana actual
+fin_semana = inicio_semana + timedelta(days=6)       # Domingo de la semana actual
+
+# ----------------------------------------------------
 # OPCIÓN 1: REPORTE GENERAL DE DEUDAS
 # ----------------------------------------------------
 if menu == "📊 Reporte de Deudas (Para el Jefe)":
-    st.title("📊 Resumen de Deudas a Proveedores")
+    st.title("📊 Resumen General de Deudas a Proveedores")
 
     if not todos_proveedores:
         st.info("Aún no se han registrado compras ni pagos en el sistema.")
     else:
+        # Filtrar compras únicamente A CRÉDITO para la deuda del proveedor
+        df_compras_credito = df_compras[df_compras['tipo_pago'] == 'A CRÉDITO'] if not df_compras.empty else df_compras
+
         resumen_data = []
         tot_compra_gen = 0
         tot_pago_gen = 0
 
         for prov in todos_proveedores:
-            c_p = df_compras[df_compras['proveedor'].astype(str).str.strip().str.upper() == prov]['total'].sum() if not df_compras.empty else 0
+            c_p = df_compras_credito[df_compras_credito['proveedor'].astype(str).str.strip().str.upper() == prov]['total'].sum() if not df_compras_credito.empty else 0
             p_p = df_pagos[df_pagos['proveedor'].astype(str).str.strip().str.upper() == prov]['monto'].sum() if not df_pagos.empty else 0
             saldo_p = c_p - p_p
 
@@ -318,7 +334,7 @@ if menu == "📊 Reporte de Deudas (Para el Jefe)":
         saldo_gen = tot_compra_gen - tot_pago_gen
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Comprado (Global)", f"${tot_compra_gen:,.2f}")
+        c1.metric("Total Crédito Comprado", f"${tot_compra_gen:,.2f}")
         c2.metric("Total Abonado (Global)", f"${tot_pago_gen:,.2f}")
         c3.metric("Saldo Pendiente Total", f"${saldo_gen:,.2f}")
 
@@ -345,16 +361,117 @@ if menu == "📊 Reporte de Deudas (Para el Jefe)":
         st.dataframe(df_mostrar, use_container_width=True)
 
 # ----------------------------------------------------
-# OPCIÓN 2: REGISTRAR COMPRA / FACTURA
+# OPCIÓN 2: CONTROL DE PRESUPUESTO SEMANAL
+# ----------------------------------------------------
+elif menu == "🎯 Control de Presupuesto Semanal":
+    st.title("🎯 Medidor de Presupuesto Semanal para Fruta / Insumos")
+
+    col_f1, col_f2, col_f3 = st.columns([2, 2, 2])
+    with col_f1:
+        f_inicio = st.date_input("Fecha Inicio de Semana", inicio_semana)
+    with col_f2:
+        f_fin = st.date_input("Fecha Fin de Semana", fin_semana)
+    with col_f3:
+        presupuesto_limite = st.number_input("Presupuesto Semanal Asignado ($)", min_value=100.0, value=10000.0, step=1000.0)
+
+    # Convertir fechas a string para comparar
+    str_f_inicio = str(f_inicio)
+    str_f_fin = str(f_fin)
+
+    # 1. Compras de Contado de la semana
+    if not df_compras.empty:
+        compras_contado_sem = df_compras[
+            (df_compras['tipo_pago'] == 'DE CONTADO') & 
+            (df_compras['fecha'] >= str_f_inicio) & 
+            (df_compras['fecha'] <= str_f_fin)
+        ]['total'].sum()
+    else:
+        compras_contado_sem = 0.0
+
+    # 2. Pagos/Abonos realizados en la semana (Facturas crédito o pagos generales)
+    if not df_pagos.empty:
+        pagos_sem = df_pagos[
+            (df_pagos['fecha'] >= str_f_inicio) & 
+            (df_pagos['fecha'] <= str_f_fin)
+        ]['monto'].sum()
+    else:
+        pagos_sem = 0.0
+
+    total_ejecutado = compras_contado_sem + pagos_sem
+    diferencia = presupuesto_limite - total_ejecutado
+    porcentaje_usado = min(total_ejecutado / presupuesto_limite, 1.0) if presupuesto_limite > 0 else 1.0
+    pct_real = (total_ejecutado / presupuesto_limite * 100) if presupuesto_limite > 0 else 100
+
+    st.markdown("### 📊 Estado Actual del Presupuesto")
+
+    # Mostrar barra de progreso con alerta según nivel
+    st.progress(porcentaje_usado)
+
+    if total_ejecutado > presupuesto_limite:
+        st.error(f"🚨 **¡PRESUPUESTO EXCEDIDO!** Has sobrepasado la meta en **${abs(diferencia):,.2f}** ({pct_real:.1f}% gastado).")
+    elif pct_real >= 80:
+        st.warning(f"⚠️ **ALERTA DE CAJA:** Has consumido el **{pct_real:.1f}%** de tu presupuesto semanal. Te quedan **${diferencia:,.2f}**.")
+    else:
+        st.success(f"✅ **DENTRO DEL MARGEN:** Has ejecutado el **{pct_real:.1f}%** del presupuesto semanal. Dispones de **${diferencia:,.2f}**.")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Meta Semanal", f"${presupuesto_limite:,.2f}")
+    m2.metric("Compras Contado (Semana)", f"${compras_contado_sem:,.2f}")
+    m3.metric("Abonos / Pagos (Semana)", f"${pagos_sem:,.2f}")
+    m4.metric("Ejecutado Total", f"${total_ejecutado:,.2f}", delta=f"${diferencia:,.2f} disponible", delta_color="normal" if diferencia >= 0 else "inverse")
+
+    st.markdown("---")
+
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        st.subheader("🛒 Compras de Contado de esta Semana")
+        if not df_compras.empty:
+            df_c_sem = df_compras[
+                (df_compras['tipo_pago'] == 'DE CONTADO') & 
+                (df_compras['fecha'] >= str_f_inicio) & 
+                (df_compras['fecha'] <= str_f_fin)
+            ]
+            if not df_c_sem.empty:
+                df_c_sem_d = df_c_sem[['fecha', 'remision', 'proveedor', 'fruta', 'total']].copy()
+                df_c_sem_d['total'] = df_c_sem_d['total'].apply(lambda x: f"${x:,.2f}")
+                st.dataframe(df_c_sem_d, use_container_width=True)
+            else:
+                st.info("No hay compras de contado registradas en este rango de fechas.")
+        else:
+            st.info("No hay compras registradas.")
+
+    with col_t2:
+        st.subheader("💵 Abonos / Pagos Efectuados esta Semana")
+        if not df_pagos.empty:
+            df_p_sem = df_pagos[
+                (df_pagos['fecha'] >= str_f_inicio) & 
+                (df_pagos['fecha'] <= str_f_fin)
+            ]
+            if not df_p_sem.empty:
+                df_p_sem_d = df_p_sem[['fecha', 'comprobante', 'proveedor', 'remision_asociada', 'monto']].copy()
+                df_p_sem_d['monto'] = df_p_sem_d['monto'].apply(lambda x: f"${x:,.2f}")
+                st.dataframe(df_p_sem_d, use_container_width=True)
+            else:
+                st.info("No hay pagos registrados en este rango de fechas.")
+        else:
+            st.info("No hay pagos registrados.")
+
+# ----------------------------------------------------
+# OPCIÓN 3: REGISTRAR COMPRA / FACTURA
 # ----------------------------------------------------
 elif menu == "📦 Registrar Compra / Factura":
-    st.title("📦 Registrar Compra o Insumo A Crédito")
+    st.title("📦 Registrar Compra o Insumo")
 
     # Calcular consecutivo de Factura FC-xxx
     lista_remisiones = df_compras['remision'].tolist() if not df_compras.empty else []
     siguiente_fc = generar_siguiente_codigo("FC", lista_remisiones)
 
-    opcion_prov = st.radio("¿Cómo deseas ingresar el proveedor?", ["Escribir nombre (Nuevo o Existente)", "Seleccionar de la lista de existentes"], horizontal=True)
+    col_tipo, col_prov = st.columns([2, 3])
+    with col_tipo:
+        tipo_pago_sel = st.selectbox("Modalidad de Pago:", ["A CRÉDITO", "DE CONTADO"], help="De Contado afecta el presupuesto semanal de inmediato. A Crédito suma a la deuda del proveedor.")
+
+    with col_prov:
+        opcion_prov = st.radio("¿Cómo deseas ingresar el proveedor?", ["Escribir nombre (Nuevo o Existente)", "Seleccionar de la lista de existentes"], horizontal=True)
 
     if opcion_prov == "Seleccionar de la lista de existentes" and todos_proveedores:
         proveedor_seleccionado = st.selectbox("Proveedor Existente:", todos_proveedores)
@@ -373,7 +490,7 @@ elif menu == "📦 Registrar Compra / Factura":
             precio_kg = st.number_input("Precio Unitario / Precio por Kilo ($)", min_value=0.0, step=50.0)
 
         total_calculado = kilos * precio_kg
-        st.write(f"**Total Compra Calculado:** ${total_calculado:,.2f}")
+        st.write(f"**Total Compra Calculado ({tipo_pago_sel}):** ${total_calculado:,.2f}")
 
         submitted = st.form_submit_button("Guardar Registro de Compra")
         if submitted:
@@ -381,12 +498,12 @@ elif menu == "📦 Registrar Compra / Factura":
             if not prov_final or not remision or not fruta or kilos <= 0 or precio_kg <= 0:
                 st.error("Por favor completa todos los campos correctamente.")
             else:
-                insertar_compra(str(fecha), remision, prov_final, fruta, kilos, precio_kg, total_calculado)
-                st.success(f"¡Compra guardada con éxito para {prov_final}! Número: {remision} | Total: ${total_calculado:,.2f}")
+                insertar_compra(str(fecha), remision, prov_final, fruta, kilos, precio_kg, total_calculado, tipo_pago_sel)
+                st.success(f"¡Compra [{tipo_pago_sel}] guardada con éxito para {prov_final}! Número: {remision} | Total: ${total_calculado:,.2f}")
                 st.rerun()
 
 # ----------------------------------------------------
-# OPCIÓN 3: REGISTRAR PAGO / ABONO
+# OPCIÓN 4: REGISTRAR PAGO / ABONO
 # ----------------------------------------------------
 elif menu == "💵 Registrar Pago / Abono":
     st.title("💵 Registrar Pago o Abono a Proveedor")
@@ -404,10 +521,13 @@ elif menu == "💵 Registrar Pago / Abono":
 
     prov_pago_limpio = proveedor_pago_sel.strip().upper() if proveedor_pago_sel else ""
 
-    # Búsqueda de facturas del proveedor
+    # Búsqueda de facturas del proveedor únicamente A CRÉDITO
     opciones_facturas = ["General / Sin Factura Específica"]
     if prov_pago_limpio and not df_compras.empty:
-        df_c_prov = df_compras[df_compras['proveedor'].astype(str).str.strip().str.upper() == prov_pago_limpio]
+        df_c_prov = df_compras[
+            (df_compras['proveedor'].astype(str).str.strip().str.upper() == prov_pago_limpio) & 
+            (df_compras['tipo_pago'] == 'A CRÉDITO')
+        ]
         for _, row in df_c_prov.iterrows():
             rem = str(row['remision'])
             tot = row['total']
@@ -445,7 +565,7 @@ elif menu == "💵 Registrar Pago / Abono":
                 st.rerun()
 
 # ----------------------------------------------------
-# OPCIÓN 4: HISTORIAL DETALLADO
+# OPCIÓN 5: HISTORIAL DETALLADO
 # ----------------------------------------------------
 elif menu == "📜 Historial Detallado":
     st.title("📜 Historial Detallado de Transacciones")
@@ -456,10 +576,10 @@ elif menu == "📜 Historial Detallado":
         prov_seleccionado = st.selectbox("Seleccionar Proveedor:", ["Todos"] + todos_proveedores)
 
     if prov_seleccionado == "Todos":
-        df_c = df_compras.copy()
+        df_c = df_compras[df_compras['tipo_pago'] == 'A CRÉDITO'].copy() if not df_compras.empty else df_compras
         df_p = df_pagos.copy()
     else:
-        df_c = df_compras[df_compras['proveedor'].astype(str).str.strip().str.upper() == prov_seleccionado].copy() if not df_compras.empty else df_compras
+        df_c = df_compras[(df_compras['proveedor'].astype(str).str.strip().str.upper() == prov_seleccionado) & (df_compras['tipo_pago'] == 'A CRÉDITO')].copy() if not df_compras.empty else df_compras
         df_p = df_pagos[df_pagos['proveedor'].astype(str).str.strip().str.upper() == prov_seleccionado].copy() if not df_pagos.empty else df_pagos
 
     tot_compras = df_c['total'].sum() if not df_c.empty else 0
@@ -477,13 +597,13 @@ elif menu == "📜 Historial Detallado":
         )
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Comprado", f"${tot_compras:,.2f}")
+    c1.metric("Total Comprado A Crédito", f"${tot_compras:,.2f}")
     c2.metric("Total Abonado", f"${tot_pagos:,.2f}")
     c3.metric("Saldo Pendiente Global", f"${saldo:,.2f}")
 
     st.markdown("---")
 
-    st.subheader(f"📦 Estado de Facturas y Remisiones ({prov_seleccionado})")
+    st.subheader(f"📦 Estado de Facturas y Remisiones A Crédito ({prov_seleccionado})")
     if not df_c.empty:
         df_c_disp = df_c.copy()
         
@@ -520,7 +640,7 @@ elif menu == "📜 Historial Detallado":
         cols_c = [c for c in ['fecha', 'factura_remision', 'proveedor', 'item_concepto', 'cantidad_kilos', 'precio_unitario', 'valor_factura', 'Total Abonado', 'Saldo Factura'] if c in df_c_disp.columns]
         st.dataframe(df_c_disp[cols_c], use_container_width=True)
     else:
-        st.info("No hay compras ni facturas registradas.")
+        st.info("No hay compras ni facturas a crédito registradas.")
 
     st.subheader(f"💵 Historial de Abonos y Pagos ({prov_seleccionado})")
     if not df_p.empty:
@@ -536,7 +656,7 @@ elif menu == "📜 Historial Detallado":
         st.info("No hay pagos registrados.")
 
 # ----------------------------------------------------
-# OPCIÓN 5: ELIMINAR REGISTROS
+# OPCIÓN 6: ELIMINAR REGISTROS
 # ----------------------------------------------------
 elif menu == "🗑️ Eliminar Registros":
     st.title("🗑️ Eliminar Registros Incorrectos")
@@ -546,7 +666,7 @@ elif menu == "🗑️ Eliminar Registros":
 
     if tipo_eliminar == "Compra / Factura":
         if not df_compras.empty:
-            df_compras['etiqueta'] = df_compras.apply(lambda r: f"ID: {r['id']} | Fecha: {r['fecha']} | Prov: {r['proveedor']} | Ítem: {r['fruta']} | Total: ${r['total']:,.2f} | Remisión: {r['remision']}", axis=1)
+            df_compras['etiqueta'] = df_compras.apply(lambda r: f"ID: {r['id']} | Fecha: {r['fecha']} | Prov: {r['proveedor']} | Tipo: {r.get('tipo_pago', 'A CRÉDITO')} | Total: ${r['total']:,.2f} | Remisión: {r['remision']}", axis=1)
             opcion = st.selectbox("Selecciona la compra a eliminar:", df_compras['etiqueta'].tolist())
             id_eliminar = int(opcion.split("|")[0].replace("ID:", "").strip())
 
