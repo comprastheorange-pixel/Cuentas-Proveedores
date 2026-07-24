@@ -48,7 +48,7 @@ class PDFReport(FPDF):
 
     def header(self):
         self.set_font("Helvetica", "B", 14)
-        self.set_text_color(30, 58, 138)  # Azul corporativo
+        self.set_text_color(30, 58, 138)
         self.cell(0, 8, self.titulo, ln=True, align="C")
         self.set_font("Helvetica", "I", 8)
         self.set_text_color(100, 100, 100)
@@ -61,12 +61,11 @@ class PDFReport(FPDF):
         self.set_text_color(150, 150, 150)
         self.cell(0, 10, f"Página {self.page_no()}", align="C")
 
-# --- GENERADOR DE PDF: REPORTE CONSOLIDADO DE DEUDAS ---
+# --- GENERADORES DE PDF ---
 def generar_pdf_resumen(df_resumen, deuda_total):
     pdf = PDFReport("REPORTE DE CUENTAS POR PAGAR A PROVEEDORES")
     pdf.add_page()
     
-    # Resumen General (Caja destacada)
     pdf.set_fill_color(240, 244, 248)
     pdf.set_draw_color(200, 200, 200)
     pdf.rect(10, 28, 190, 12, style="FD")
@@ -75,30 +74,25 @@ def generar_pdf_resumen(df_resumen, deuda_total):
     pdf.set_text_color(0, 0, 0)
     pdf.set_xy(15, 30)
     pdf.cell(90, 8, "TOTAL DEUDA PENDIENTE:")
-    pdf.set_text_color(185, 28, 28)  # Rojo
+    pdf.set_text_color(185, 28, 28)
     pdf.cell(80, 8, f"${deuda_total:,.2f}", align="R")
-    
     pdf.ln(16)
     
-    # Encabezados de la Tabla
     pdf.set_fill_color(30, 58, 138)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 9)
-    
     pdf.cell(60, 8, "Proveedor", border=1, fill=True)
     pdf.cell(40, 8, "Total Comprado", border=1, align="R", fill=True)
     pdf.cell(40, 8, "Total Abonado", border=1, align="R", fill=True)
     pdf.cell(50, 8, "Saldo Pendiente", border=1, align="R", fill=True)
     pdf.ln()
     
-    # Filas de la Tabla
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", "", 9)
     
     fill = False
     for _, row in df_resumen.iterrows():
         pdf.set_fill_color(248, 250, 252) if fill else pdf.set_fill_color(255, 255, 255)
-        
         pdf.cell(60, 7, str(row['proveedor']), border=1, fill=fill)
         pdf.cell(40, 7, f"${row['total_compras']:,.2f}", border=1, align="R", fill=fill)
         pdf.cell(40, 7, f"${row['total_pagos']:,.2f}", border=1, align="R", fill=fill)
@@ -116,7 +110,6 @@ def generar_pdf_resumen(df_resumen, deuda_total):
         pdf.ln()
         fill = not fill
         
-    # Fila de Totales
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_fill_color(226, 232, 240)
     pdf.cell(60, 8, "TOTAL GENERAL", border=1, fill=True)
@@ -127,12 +120,10 @@ def generar_pdf_resumen(df_resumen, deuda_total):
     
     return bytes(pdf.output())
 
-# --- GENERADOR DE PDF: HISTORIAL / ESTADO DE CUENTA INDIVIDUAL O GENERAL ---
 def generar_pdf_historial(df_c, df_p, filtro_prov="Todos", total_compras=0.0, total_pagos=0.0):
     pdf = PDFReport(f"ESTADO DE CUENTA - PROVEEDOR: {filtro_prov.upper()}")
     pdf.add_page()
     
-    # Resumen de Saldo del Proveedor
     saldo_pendiente = total_compras - total_pagos
     pdf.set_fill_color(240, 244, 248)
     pdf.set_draw_color(200, 200, 200)
@@ -152,7 +143,6 @@ def generar_pdf_historial(df_c, df_p, filtro_prov="Todos", total_compras=0.0, to
     
     pdf.ln(18)
     
-    # --- SECCIÓN 1: ENTRADAS DE FRUTA ---
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(30, 58, 138)
     pdf.cell(0, 8, "1. DESPACHOS Y ENTRADAS DE FRUTA", ln=True)
@@ -196,7 +186,6 @@ def generar_pdf_historial(df_c, df_p, filtro_prov="Todos", total_compras=0.0, to
     pdf.cell(23, 7, f"${total_compras:,.0f}", border=1, align="R", fill=True)
     pdf.ln(12)
     
-    # --- SECCIÓN 2: ABONOS / PAGOS ---
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(30, 58, 138)
     pdf.cell(0, 8, "2. ABONOS Y PAGOS REGISTRADOS", ln=True)
@@ -239,7 +228,8 @@ opcion = st.sidebar.radio("Selecciona una opción:", [
     "📊 Reporte de Deudas (Para el Jefe)",
     "📦 Registrar Entrada de Fruta",
     "💵 Registrar Pago / Abono",
-    "📜 Historial Detallado"
+    "📜 Historial Detallado",
+    "🗑️ Eliminar Registros"
 ])
 
 # ----------------------------------------------------
@@ -263,7 +253,6 @@ if opcion == "📊 Reporte de Deudas (Para el Jefe)":
         col1.metric("Deuda Total Pendiente", f"${deuda_total:,.2f}")
         col2.metric("Proveedores con Deuda", len(df_resumen[df_resumen["saldo_pendiente"] > 0]))
         
-        # Botón de Descarga PDF Resumen Consolidado
         pdf_bytes = generar_pdf_resumen(df_resumen, deuda_total)
         col3.download_button(
             label="📄 Descargar Resumen General (PDF)",
@@ -363,7 +352,7 @@ elif opcion == "💵 Registrar Pago / Abono":
         st.warning("Primero debes registrar entradas de fruta antes de realizar abonos.")
 
 # ----------------------------------------------------
-# 4. HISTORIAL DETALLADO / CONSULTA DE UN PROVEEDOR
+# 4. HISTORIAL DETALLADO
 # ----------------------------------------------------
 elif opcion == "📜 Historial Detallado":
     st.header("Consulta de Cuentas y Movimientos por Proveedor")
@@ -379,7 +368,6 @@ elif opcion == "📜 Historial Detallado":
         col_filtro, col_pdf = st.columns([2, 2])
         prov_seleccionado = col_filtro.selectbox("Seleccionar Proveedor:", lista_prov)
         
-        # Filtrado de datos según el proveedor seleccionado
         if prov_seleccionado != "Todos":
             df_c = df_c_all[df_c_all["proveedor"] == prov_seleccionado]
             df_p = df_p_all[df_p_all["proveedor"] == prov_seleccionado]
@@ -387,18 +375,15 @@ elif opcion == "📜 Historial Detallado":
             df_c = df_c_all
             df_p = df_p_all
 
-        # Cálculo de totales
         tot_compras = float(df_c["total"].sum()) if not df_c.empty else 0.0
         tot_pagos = float(df_p["monto"].sum()) if not df_p.empty else 0.0
         saldo_p = tot_compras - tot_pagos
 
-        # Tarjetas de resumen del proveedor seleccionado
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Comprado", f"${tot_compras:,.2f}")
         c2.metric("Total Abonado", f"${tot_pagos:,.2f}")
         c3.metric("Saldo Pendiente", f"${saldo_p:,.2f}", delta_color="inverse")
 
-        # Botón para descargar / imprimir PDF de este proveedor
         pdf_historial_bytes = generar_pdf_historial(df_c, df_p, prov_seleccionado, tot_compras, tot_pagos)
         col_pdf.write("")
         col_pdf.write("")
@@ -412,7 +397,6 @@ elif opcion == "📜 Historial Detallado":
 
         st.markdown("---")
         
-        # Mostrar Tablas de Movimientos
         st.subheader(f"📦 Entradas de Fruta ({prov_seleccionado})")
         if not df_c.empty:
             st.dataframe(
@@ -438,3 +422,56 @@ elif opcion == "📜 Historial Detallado":
             st.info("No hay abonos registrados para este proveedor.")
     else:
         st.info("Aún no hay transacciones registradas.")
+
+# ----------------------------------------------------
+# 5. ELIMINAR REGISTROS INCORRECTOS
+# ----------------------------------------------------
+elif opcion == "🗑️ Eliminar Registros":
+    st.header("Eliminar Facturas o Pagos Mal Registrados")
+    st.warning("⚠️ Ten precaución: Al eliminar un registro se recalcularán automáticamente las deudas.")
+
+    tipo = st.selectbox("¿Qué deseas eliminar?", ["Entrada de Fruta / Factura", "Pago / Abono"])
+    conn = get_connection()
+
+    if tipo == "Entrada de Fruta / Factura":
+        df = pd.read_sql_query("SELECT id, fecha, remision, proveedor, fruta, kilos, total FROM compras ORDER BY id DESC", conn)
+        if not df.empty:
+            st.dataframe(df, use_container_width=True)
+            
+            # Crear desplegable con el ID y detalles
+            opciones_del = [f"ID: {row['id']} | {row['fecha']} | {row['proveedor']} | {row['fruta']} | ${row['total']:,.2f}" for _, row in df.iterrows()]
+            seleccion = st.selectbox("Selecciona el registro a eliminar:", opciones_del)
+            id_eliminar = int(seleccion.split("|")[0].replace("ID:", "").strip())
+
+            if st.button("🗑️ Eliminar Factura / Entrada"):
+                c = conn.cursor()
+                c.execute("DELETE FROM compras WHERE id = ?", (id_eliminar,))
+                conn.commit()
+                conn.close()
+                st.success("✅ Registro eliminado correctamente.")
+                st.rerun()
+        else:
+            st.info("No hay entradas registradas.")
+
+    else:
+        df = pd.read_sql_query("SELECT id, fecha, proveedor, monto, comprobante FROM pagos ORDER BY id DESC", conn)
+        if not df.empty:
+            st.dataframe(df, use_container_width=True)
+            
+            # Crear desplegable con el ID y detalles
+            opciones_del = [f"ID: {row['id']} | {row['fecha']} | {row['proveedor']} | ${row['monto']:,.2f}" for _, row in df.iterrows()]
+            seleccion = st.selectbox("Selecciona el pago a eliminar:", opciones_del)
+            id_eliminar = int(seleccion.split("|")[0].replace("ID:", "").strip())
+
+            if st.button("🗑️ Eliminar Pago / Abono"):
+                c = conn.cursor()
+                c.execute("DELETE FROM pagos WHERE id = ?", (id_eliminar,))
+                conn.commit()
+                conn.close()
+                st.success("✅ Pago eliminado correctamente.")
+                st.rerun()
+        else:
+            st.info("No hay pagos registrados.")
+    
+    if conn:
+        conn.close()
