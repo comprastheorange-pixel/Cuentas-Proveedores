@@ -93,16 +93,13 @@ def generar_pdf_resumen(df_resumen, total_compra_gen, total_pago_gen, saldo_gen)
     story = []
     styles = getSampleStyleSheet()
 
-    # Estilos
     title_style = ParagraphStyle(name='TitleStyle', parent=styles['Title'], fontSize=18, leading=22, textColor=colors.HexColor('#1E3A8A'))
     subtitle_style = ParagraphStyle(name='SubTitleStyle', parent=styles['Normal'], fontSize=10, leading=12, textColor=colors.gray)
 
-    # Encabezado
     story.append(Paragraph("<b>REPORTE GENERAL DE DEUDAS A PROVEEDORES</b>", title_style))
     story.append(Paragraph(f"Fecha de generación: {datetime.now().strftime('%Y-%m-%d %H:%M')}", subtitle_style))
     story.append(Spacer(1, 15))
 
-    # Resumen General
     data_resumen_box = [
         ["Total Comprado", "Total Abonado", "Saldo Pendiente Total"],
         [f"${total_compra_gen:,.2f}", f"${total_pago_gen:,.2f}", f"${saldo_gen:,.2f}"]
@@ -122,7 +119,6 @@ def generar_pdf_resumen(df_resumen, total_compra_gen, total_pago_gen, saldo_gen)
     story.append(t_resumen)
     story.append(Spacer(1, 20))
 
-    # Tabla Detalle por Proveedor
     table_data = [["Proveedor", "Total Comprado", "Total Abonado", "Saldo Pendiente"]]
     for _, row in df_resumen.iterrows():
         table_data.append([
@@ -165,7 +161,6 @@ def generar_pdf_historial(df_compras, df_pagos, proveedor_nombre, total_c, total
     story.append(Paragraph(f"Fecha de reporte: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
     story.append(Spacer(1, 15))
 
-    # Resumen
     saldo = total_c - total_p
     data_resumen = [
         ["Total Comprado", "Total Abonado", "Saldo Pendiente"],
@@ -191,12 +186,12 @@ def generar_pdf_historial(df_compras, df_pagos, proveedor_nombre, total_c, total
         t_compras_data = [["Fecha", "Remisión", "Fruta", "Kilos", "Precio/Kg", "Total"]]
         for _, r in df_compras.iterrows():
             t_compras_data.append([
-                str(r['fecha']),
-                str(r['remision']),
-                str(r['fruta']),
-                f"{r['kilos']:,}",
-                f"${r['precio_kg']:,.2f}",
-                f"${r['total']:,.2f}"
+                str(r.get('fecha', '-')),
+                str(r.get('remision', '-')),
+                str(r.get('fruta', '-')),
+                f"{r.get('kilos', 0):,}",
+                f"${r.get('precio_kg', 0):,.2f}",
+                f"${r.get('total', 0):,.2f}"
             ])
         t_c = Table(t_compras_data, colWidths=[70, 80, 90, 70, 100, 130])
         t_c.setStyle(TableStyle([
@@ -221,11 +216,14 @@ def generar_pdf_historial(df_compras, df_pagos, proveedor_nombre, total_c, total
     if not df_pagos.empty:
         t_pagos_data = [["Fecha", "Comprobante", "Monto", "Observación"]]
         for _, r in df_pagos.iterrows():
+            obs = r.get('observacion', '-')
+            if pd.isna(obs) or str(obs).strip() == '':
+                obs = '-'
             t_pagos_data.append([
-                str(r['fecha']),
-                str(r['comprobante']),
-                f"${r['monto']:,.2f}",
-                str(r['observacion']) if r['observacion'] else "-"
+                str(r.get('fecha', '-')),
+                str(r.get('comprobante', '-')),
+                f"${r.get('monto', 0):,.2f}",
+                str(obs)
             ])
         t_p = Table(t_pagos_data, colWidths=[80, 100, 120, 240])
         t_p.setStyle(TableStyle([
@@ -262,7 +260,6 @@ df_pagos = obtener_pagos()
 if menu == "📊 Reporte de Deudas (Para el Jefe)":
     st.title("📊 Resumen de Deudas a Proveedores")
 
-    # Lista de proveedores únicos
     provs_compras = df_compras['proveedor'].dropna().unique().tolist() if not df_compras.empty else []
     provs_pagos = df_pagos['proveedor'].dropna().unique().tolist() if not df_pagos.empty else []
     todos_proveedores = sorted(list(set(provs_compras + provs_pagos)))
@@ -292,7 +289,6 @@ if menu == "📊 Reporte de Deudas (Para el Jefe)":
         df_resumen = pd.DataFrame(resumen_data)
         saldo_gen = tot_compra_gen - tot_pago_gen
 
-        # Métricas Principales
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Comprado (Global)", f"${tot_compra_gen:,.2f}")
         c2.metric("Total Abonado (Global)", f"${tot_pago_gen:,.2f}")
@@ -313,7 +309,6 @@ if menu == "📊 Reporte de Deudas (Para el Jefe)":
                 use_container_width=True
             )
 
-        # Mostrar tabla de resumen formateada
         df_mostrar = df_resumen.copy()
         df_mostrar['Total Comprado'] = df_mostrar['Total Comprado'].apply(lambda x: f"${x:,.2f}")
         df_mostrar['Total Abonado'] = df_mostrar['Total Abonado'].apply(lambda x: f"${x:,.2f}")
@@ -356,7 +351,6 @@ elif menu == "📦 Registrar Entrada de Fruta":
 elif menu == "💵 Registrar Pago / Abono":
     st.title("💵 Registrar Pago o Abono a Proveedor")
 
-    # Obtener lista existente de proveedores
     provs_compras = df_compras['proveedor'].dropna().unique().tolist() if not df_compras.empty else []
     provs_pagos = df_pagos['proveedor'].dropna().unique().tolist() if not df_pagos.empty else []
     todos_proveedores = sorted(list(set(provs_compras + provs_pagos)))
@@ -404,7 +398,6 @@ elif menu == "📜 Historial Detallado":
     with col_select:
         prov_seleccionado = st.selectbox("Seleccionar Proveedor:", ["Todos"] + todos_proveedores)
 
-    # Filtrar dataframes
     if prov_seleccionado == "Todos":
         df_c = df_compras.copy()
         df_p = df_pagos.copy()
@@ -426,7 +419,6 @@ elif menu == "📜 Historial Detallado":
             use_container_width=True
         )
 
-    # Métricas
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Comprado", f"${tot_compras:,.2f}")
     c2.metric("Total Abonado", f"${tot_pagos:,.2f}")
@@ -439,7 +431,8 @@ elif menu == "📜 Historial Detallado":
         df_c_disp = df_c.copy()
         df_c_disp['precio_kg'] = df_c_disp['precio_kg'].apply(lambda x: f"${x:,.2f}")
         df_c_disp['total'] = df_c_disp['total'].apply(lambda x: f"${x:,.2f}")
-        st.dataframe(df_c_disp[['fecha', 'remision', 'proveedor', 'fruta', 'kilos', 'precio_kg', 'total']], use_container_width=True)
+        cols_c = [c for c in ['fecha', 'remision', 'proveedor', 'fruta', 'kilos', 'precio_kg', 'total'] if c in df_c_disp.columns]
+        st.dataframe(df_c_disp[cols_c], use_container_width=True)
     else:
         st.info("No hay entradas de fruta registradas.")
 
@@ -447,7 +440,8 @@ elif menu == "📜 Historial Detallado":
     if not df_p.empty:
         df_p_disp = df_p.copy()
         df_p_disp['monto'] = df_p_disp['monto'].apply(lambda x: f"${x:,.2f}")
-        st.dataframe(df_p_disp[['fecha', 'comprobante', 'proveedor', 'monto', 'observacion']], use_container_width=True)
+        cols_p = [c for c in ['fecha', 'comprobante', 'proveedor', 'monto', 'observacion'] if c in df_p_disp.columns]
+        st.dataframe(df_p_disp[cols_p], use_container_width=True)
     else:
         st.info("No hay pagos registrados.")
 
